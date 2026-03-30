@@ -5,6 +5,9 @@
 **a. Initial design**
 
 - Briefly describe your initial UML design.
+    - The user should be able to add a pet and the relevant information about the pet.
+    - The user should be able to add and edit the task that they created with duration and priority.
+    - The user should be able to see all of their plans displayed.
 - What classes did you include, and what responsibilities did you assign to each?
 
 **b. Design changes**
