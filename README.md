@@ -55,3 +55,22 @@ These are the scheduling features I implemented with the help of Claude Code!
 
 5. **Multi-day plan grouped by due date** — Instead of producing one flat list for today, the scheduler builds a 30-day lookahead grouped by date. Today's section runs the full knapsack and time-slot logic. Future sections just show which tasks are coming up and when, based on each task's next due date. When a task is marked done, the plan regenerates immediately and the next occurrence appears in the right future date section automatically.
 
+### Testing PawPal+
+
+The command to run the tests:
+
+```bash
+python -m pytest test/test_pawpal.py -v
+```
+
+There are 34 tests total, split across four areas:
+
+- **Knapsack** — checks that the algorithm actually finds the best combination of tasks, not just the first ones that fit. The key case: two medium-priority tasks that together outscore one high-priority task when the budget is tight.
+- **Time slots and budget** — verifies that same-pet tasks always land in non-overlapping slots, that tasks too long for the budget get excluded, and that different pets can share time without any conflict.
+- **Recurrence** — confirms that next due dates calculate correctly for daily, weekly, and monthly tasks, that overdue tasks show up as due today, and that unmarking a task resets it back to "never done."
+- **Sort and filter** — makes sure sort by start time works in both directions, and that filtering by completion status or pet name (or both together) returns exactly the right subset.
+
+**Confidence Level: 4/5**
+
+The core scheduling logic — knapsack selection, recurrence math, and sort/filter — is well-covered and all 34 tests pass. The one thing keeping this from five stars is that the conflict detection code (the part that bumps a task if it overlaps with another same-pet slot) turns out to be unreachable with the current sequential time-slot algorithm, so it goes untested. It's not broken, just never triggered. If the scheduling strategy ever changes to support user-specified start times, that code would need its own tests.
+
