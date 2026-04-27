@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from enum import Enum
+import anthropic
+
 
 
 # ---------------------------------------------------------------------------
@@ -479,3 +481,139 @@ class Scheduler:
 
         # Return sorted by date so the UI can iterate chronologically
         return dict(sorted(plan.items())), conflicts
+
+# ---------------------------------------------------------------------------
+# PetAssistant
+# ---------------------------------------------------------------------------
+@dataclass
+class PetAssistant:
+    """
+    Bridges the Streamlit UI and Claude API.
+    Holds live app state (pets, plan, sick flags) and conversation history
+    so every API call is grounded in the owner's actual schedule.
+    """
+    # api_key is a constructor parameter — when app.py creates PetAssistant(...),
+    # it passes st.secrets["ANTHROPIC_API_KEY"] here so this class never touches Streamlit.
+    api_key: str
+    all_pets: list[Pet] = field(default_factory=list)
+    plan: dict[date, list[Task]] | None = None
+    sick_pets: list[str] = field(default_factory=list)       # pet names flagged as unwell
+    chat_history: list[dict] = field(default_factory=list)   # full conversation for multi-turn context
+
+    def ask(self, user_message: str) -> str:
+        """
+        Main pipeline entry — called from app.py when the owner submits a message.
+        Input:  user_message: str
+        Output: reply: str  (displayed in st.chat_message)
+        """
+        # 1. Append user turn in Anthropic's required dict format
+        self.chat_history.append({"role": "user", "content": user_message})
+
+        # 2. Inject context (schedule + pets) as a silent exchange before the real history.
+        #    This tells Claude about the owner's data without cluttering the visible chat.
+        messages_with_context = [
+            {"role": "user",      "content": f"[App state]\n{self.build_context_block()}"},
+            {"role": "assistant", "content": "Got it! I have your pet care info ready."},
+            *self.chat_history,
+        ]
+
+        # 3. Call Claude API. system= sets the persona; messages= carries the full conversation.
+        client = anthropic.Anthropic(api_key=self.api_key)
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1024,
+            system=self.build_system_prompt(),
+            messages=messages_with_context,
+        )
+
+        # 4. content is list[ContentBlock] — [0].text extracts the str reply
+        reply: str = response.content[0].text
+
+        # 5. Save assistant turn so the next question remembers this answer
+        self.chat_history.append({"role": "assistant", "content": reply})
+
+        return reply
+
+    def clear_history(self) -> None:
+        """Wipes conversation history — call when starting a fresh session."""
+        self.chat_history.clear()
+
+    def build_system_prompt(self) -> str:
+        """
+        Returns the static persona string passed to system= in every API call.
+        Output: str — Claude reads this before any messages.
+        """
+        return (
+            "You are PawPal, a friendly and knowledgeable pet care assistant. "
+            "You help owners stay on top of their pets' schedules and wellbeing. "
+            "Answer concisely and warmly. Never make up medication names or dosages."
+        )
+
+    def build_context_block(self) -> str:
+        """
+        Assembles self.all_pets, self.plan, and self.sick_pets into a plain-text
+        string injected into every API call so Claude knows the owner's live data.
+        Output: str
+        """
+        lines = []
+
+        # Pet profiles: "Pets: Mochi (3yo Shiba Inu), Biscuit (7yo Golden Retriever)"
+        if self.all_pets:
+            profiles = ", ".join(f"{p.name} ({p.age}yo {p.breed})" for p in self.all_pets)
+            lines.append(f"Pets: {profiles}")
+
+        # Sick flags: join names and choose singular/plural verb
+        if self.sick_pets:
+            names = ", ".join(self.sick_pets)
+            verb  = "is" if len(self.sick_pets) == 1 else "are"
+            lines.append(f"⚠️ {names} {verb} unwell.")
+
+        # Today's schedule and upcoming tasks
+        lines.append(self.format_today_summary())
+        lines.append(self.format_upcoming_summary(days=7))
+
+        return "\n".join(lines)
+
+    def format_today_summary(self) -> str:
+        """
+        Formats today's tasks from self.plan into a readable string.
+        Output: str
+        """
+        if not self.plan:
+            return "No schedule generated yet."
+
+        # .get() safely returns [] if today has no entry — avoids KeyError
+        today_tasks: list[Task] = self.plan.get(date.today(), [])
+        if not today_tasks:
+            return "Today: no tasks scheduled."
+
+        lines = ["Today's schedule:"]
+        for t in today_tasks:
+            time_str = minutes_to_time_str(t.start_time_minutes) if t.start_time_minutes else "—"
+            status   = "✓" if t.completed else time_str
+            lines.append(f"  {status} {t.title} ({t.duration_minutes} min, {t.priority.name})")
+        return "\n".join(lines)
+
+    def format_upcoming_summary(self, days: int) -> str:
+        """
+        Iterates self.plan for dates between tomorrow and today + `days`.
+        Input: days: int   Output: str
+        """
+        if not self.plan:
+            return ""
+
+        today   = date.today()
+        cutoff  = today + timedelta(days=days)
+        lines   = ["Upcoming:"]
+        found   = False
+
+        for plan_date, tasks in self.plan.items():
+            if plan_date <= today or plan_date > cutoff:
+                continue                                  # skip today and out-of-window dates
+            lines.append(f"  {plan_date.strftime('%a %b %-d')}:")
+            for t in tasks:
+                lines.append(f"    - {t.title} ({t.priority.name})")
+            found = True
+
+        return "\n".join(lines) if found else "No upcoming tasks this week."
+

@@ -30,6 +30,11 @@ At minimum, your system should:
 - Represent the pet and the owner (basic info and preferences)
 - Build a plan/schedule for a day that chooses and orders tasks based on constraints
 - Explain the plan (why each task was chosen and when it happens)
+
+With AI, integration, the app will be able to:
+- Respond to you in natural language about: 
+    + Schedule inquiries
+    + Assist with pet care 
 """
     )
 
